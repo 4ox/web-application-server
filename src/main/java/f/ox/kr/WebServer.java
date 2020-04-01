@@ -1,4 +1,4 @@
-package four.ox;
+package f.ox.kr;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
