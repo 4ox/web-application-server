@@ -6,17 +6,18 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
 import java.net.Socket;
+import java.net.URLDecoder;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.StringTokenizer;
-import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +27,15 @@ public class RequestHandler extends Thread {
 
 	private Socket connection;
 
+	private final String DEFALT_ENCODING = "UTF-8";
+	
+	private String method;
+	private String originPath;
+	private String path;
+	private String protocol;
+	private Map<String,String> parameter = new HashMap<String,String>();
+	private Map<String,String> headers = new HashMap<String,String>();
+	
 	public RequestHandler(Socket connectionSocket) {
 		this.connection = connectionSocket;
 	}
@@ -37,65 +47,116 @@ public class RequestHandler extends Thread {
 		return Paths.get("").toAbsolutePath().toString() + "/webapp" + filePath;
 	}
 	
-	private String getParameter(String parameter) {
+	private Map<String,String> getParameter(String parameter) throws UnsupportedEncodingException {
 		Map<String,String> parameterMap = new HashMap<>();
-		
 		StringTokenizer st = new StringTokenizer(parameter);
 		String[] param = {};
 		while(st.hasMoreTokens()) {
-			st.nextToken("&");
-			
-			
-//			param = st.nextToken("&").split("=");
-//			parameterMap.putIfAbsent(param[0], param.length > 0 ? param[1] : "");
+			param = st.nextToken("&").split("=");
+			parameterMap.putIfAbsent(param[0], param.length > 0 ? param[1] : "");
 		}
-
-		parameterMap.keySet().forEach(parameterKey->{
-			log.info("{} : {}", parameterKey, parameterMap.get(parameterKey));
-		});
-		
-		parameterMap.compute("password", (key, val)  -> val.toUpperCase());         
-
-		parameterMap.keySet().forEach(parameterKey->{
-			log.info("{} : {}", parameterKey, parameterMap.get(parameterKey));
-		});
-		
-		return "";
+		return parameterMap;
 	}
 	
-	public void run() {
-		try (InputStream in = connection.getInputStream(); OutputStream out = connection.getOutputStream()) {
-			BufferedReader br = new BufferedReader(new InputStreamReader(in));
-			DataOutputStream dos = new DataOutputStream(out);
-			
-			StringTokenizer st = new StringTokenizer(br.readLine(), " ");
-			String method = st.nextToken();
-			String originPath = st.nextToken();
-			String path = originPath;
-			String protocol = st.nextToken();
-			String parameter = "";
+	private void setInfo(BufferedReader br) {
+		try {
 
+			StringTokenizer st = new StringTokenizer(br.readLine(), " ");
+			method = st.nextToken().trim();
+			originPath = URLDecoder.decode(st.nextToken(),DEFALT_ENCODING);
+			path = originPath;
+			protocol = st.nextToken();
+			
+			String line = null;
+			String k = "";
+			String v = "";
+			StringTokenizer header = null;
+			int idxx = -1;
+			
 			int idx = path.indexOf("?");
 			if( idx > 0 ) {
 				parameter = getParameter(path.substring(idx+1));
 				path = path.substring(0, idx);	
 			}
-						
-			log.info("{} {} {} {}", method, path, parameter ,protocol);
 			
-			String line = null;
-			Map<String,String> headers = new HashMap<String,String>();
-			while((line = br.readLine()).length() > 0) {
-				StringTokenizer header = new StringTokenizer(line, ":");
-				headers.put(header.nextToken().trim(), header.nextToken().trim());
+			if( method.contentEquals("POST")) {
+				System.out.println(method);
+				while((line = br.readLine()).length() > 0) {
+					header = new StringTokenizer(line, ":");
+					k = header.nextToken().trim();
+					v = header.nextToken().trim();
+					String m = "multipart/form-data;";
+					idxx = v.indexOf(m);
+					if( k.contentEquals("Content-Type") && idxx >= 0 ) {
+						v = v.substring(idxx+m.length()).trim();
+						log.info(v);
+					}
+					headers.put(k, v);
+				}					
+				
+				
+				log.info("------------------------------------------------------------------------------------------");
+				log.info(originPath);
+				
+				//parameter
+				if( parameter != null && parameter.size() > 0 ) {
+					parameter.forEach((key,val)-> log.info("{} : {}", key,val));
+				}
+				
+				if( headers.size() > 0 ) {
+					headers.forEach((key,val)-> log.info("{} : {}", key, val));
+				}
 			}
+			else if( method.contentEquals("GET")) {
+				while((line = br.readLine()).length() > 0) {
+					header = new StringTokenizer(line, ":");
+					k = header.nextToken().trim();
+					v = header.nextToken().trim();
+					headers.put(k, v);
+				}	
 
-			if( !originPath.contentEquals("/favicon.ico") ) {
-				headers.keySet().forEach(key->{ log.info("{} : {}", key, headers.get(key)); });	
 			}
 			
+			
+
+			
+//			//path
+//			if( !path.contentEquals("/favicon.ico") ) {
+
+//				
+//			}
+
+
+			
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+	
+	public void run() {
+		try (InputStream in = connection.getInputStream(); OutputStream out = connection.getOutputStream()) {
+			BufferedReader br = new BufferedReader(new InputStreamReader(in,DEFALT_ENCODING));
+			DataOutputStream dos = new DataOutputStream(out);
+			
+			//정보저장
+			setInfo(br);
+			
+			//등록 URL 
+			List<String> urls = new LinkedList<String>();
+			urls.add("/user/create");
+			
+			//파일 패스설정
 			Path filePath = Paths.get( getPath(path) );
-			if( Files.exists(filePath, new LinkOption[] { LinkOption.NOFOLLOW_LINKS }) ) {
+			
+			//등록 URL이 있으면 동적처리
+			if( urls.contains(path)) {
+				if( path.contentEquals("/user/create") ) {					
+					byte[] content = "Hello world".getBytes();
+					responseHeader(dos, 200, content.length);
+					responseBody(dos, content);					
+				}
+			}
+			else if( Files.exists(filePath, new LinkOption[] { LinkOption.NOFOLLOW_LINKS }) ) {
 				byte[] content = Files.readAllBytes(filePath);
 				responseHeader(dos, 200, content.length);
 				responseBody(dos, content);
